@@ -12,7 +12,14 @@ if (-not $hasExpandArchive -and -not $has7zip) {
 
 $TARGET = "sucata-win-amd64"
 
-$SUCATA_VERSION = (Invoke-WebRequest -Uri "https://github.com/sucata-engine/sucata-engine/raw/branch/main/VERSION").Content
+$SUCATA_VERSION = (Invoke-RestMethod -Uri "https://api.github.com/repos/sucata-engine/sucata-engine/releases/latest").tag_name
+
+if (-not $SUCATA_VERSION) {
+    Write-Error "Could not determine latest sucata version"
+    exit 1
+}
+
+Write-Host "Latest sucata version: $SUCATA_VERSION"
 $SUCATA_NAME = "sucata.exe"
 $SUCATA_URL = "https://github.com/sucata-engine/sucata-engine/releases/download/$SUCATA_VERSION/$TARGET.zip"
 $SUCATA_DIR = Join-Path $HOME "sucata"

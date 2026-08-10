@@ -41,7 +41,14 @@ else
   exit 1
 fi
 
-SUCATA_VERSION=$(curl -s https://github.com/sucata-engine/sucata-engine/raw/branch/main/VERSION)
+SUCATA_VERSION=$(curl -s https://api.github.com/repos/sucata-engine/sucata-engine/releases/latest | grep '"tag_name":' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+
+if [[ -z "$SUCATA_VERSION" ]]; then
+  echo "ERROR: Could not determine latest sucata version"
+  exit 1
+fi
+
+echo "Latest sucata version: $SUCATA_VERSION"
 SUCATA="sucata"
 SUCATA_PLAYER="sucata-player"
 SUCATA_URL="https://github.com/sucata-engine/sucata-engine/releases/download/$SUCATA_VERSION/$TARGET.zip"
