@@ -80,6 +80,15 @@ jobs:
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           echo "/usr/bin" >> "$GITHUB_PATH"
 
+      # Odin's vendor:lua/5.4 only ships a prebuilt library for Windows and
+      # Linux amd64 — on macOS it falls back to Odin's `system:lua5.4` foreign
+      # import too, same deal as SDL3 above.
+      - name: Install Lua 5.4 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install lua@5.4
+          echo "LIBRARY_PATH=$(brew --prefix lua@5.4)/lib:$LIBRARY_PATH" >> "$GITHUB_ENV"
+
       # sucata-player links SDL3 (gamepad) via Odin's `system:SDL3` foreign
       # import on Linux/macOS — Windows is fine as-is since Odin's vendor:sdl3
       # already ships a prebuilt SDL3.dll/.lib for it.
