@@ -1,0 +1,159 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.4.0 (no leading v — matches VERSION file / existing tags)"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark the GitHub Release as a pre-release"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: sucata-linux-amd64
+            ext: ""
+            shdc-bin: sokol-shdc-linux
+          - os: windows-latest
+            target: sucata-win-amd64
+            ext: ".exe"
+            shdc-bin: sokol-shdc-win.exe
+          - os: macos-14 
+            target: sucata-osx-arm64
+            ext: ""
+            shdc-bin: sokol-shdc-osx-arm
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout sucata-cli
+        uses: actions/checkout@v4
+        with:
+          repository: sucata-engine/sucata-cli
+          path: sucata-cli
+
+      - name: Checkout sucata-player
+        uses: actions/checkout@v4
+        with:
+          repository: sucata-engine/sucata-player
+          path: sucata-player
+
+      - name: Setup Odin
+        uses: laytan/setup-odin@v2
+        with:
+          release: latest
+          build-type: release_native
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Linux build deps for sokol
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglu1-mesa-dev mesa-common-dev xorg-dev libasound-dev
+
+      - name: Setup MSVC dev environment for sokol
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install shared libs
+        run: |
+          for pkg in sucata-cli sucata-player; do
+            pushd "$pkg" >/dev/null
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              pwsh -File scripts/install-shared/win.ps1
+            else
+              bash scripts/install-shared/unix.sh
+            fi
+            popd >/dev/null
+          done
+
+      - name: Build sucata-cli + sucata-player (release)
+        run: |
+          for pkg in sucata-cli sucata-player; do
+            pushd "$pkg" >/dev/null
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              cmd /c scripts\\build-release\\win.cmd
+            else
+              bash scripts/build-release/unix.sh
+            fi
+            popd >/dev/null
+          done
+
+      - name: Assemble package
+        run: |
+          set -e
+          PKG="dist/${{ matrix.target }}"
+          mkdir -p "$PKG"
+
+          cp "sucata-cli/sucata${{ matrix.ext }}" "$PKG/"
+          cp "sucata-player/sucata-player${{ matrix.ext }}" "$PKG/"
+          chmod +x "$PKG/sucata${{ matrix.ext }}" "$PKG/sucata-player${{ matrix.ext }}"
+
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp sucata-player/lua51.dll sucata-player/SDL3.dll "$PKG/"
+          fi
+
+          if [ -n "${{ matrix.shdc-bin }}" ]; then
+            mkdir -p "$PKG/sokol-shdc"
+            cp "sucata-cli/sokol-shdc/${{ matrix.shdc-bin }}" "$PKG/sokol-shdc/"
+            chmod +x "$PKG/sokol-shdc/${{ matrix.shdc-bin }}"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/${{ matrix.target }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bump VERSION
+        run: echo "${{ inputs.version }}" > VERSION
+
+      - name: Commit VERSION bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git diff --staged --quiet || git commit -m "release: ${{ inputs.version }}"
+          git push
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Zip each platform package
+        run: |
+          cd artifacts
+          for dir in */; do
+            name="${dir%/}"
+            (cd "$name" && zip -r "../${name}.zip" .)
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version }}
+          name: ${{ inputs.version }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
+          files: artifacts/*.zip

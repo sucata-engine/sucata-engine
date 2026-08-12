@@ -131,7 +131,9 @@ return {
 
 **Behaviours on an entity run in the order listed.** Put logic before rendering (e.g. `Player` movement before `DrawSprite`).
 
-> **Critical performance/correctness rule**: Sucata reuses behaviours that share the same Lua table *pointer identity*. Always define each behaviour once and expose it through a single shared table, conventionally `behaviours/init.lua`:
+> **How behaviour reuse works**: Sucata registers a behaviour once per Lua table *pointer identity* and shares that registration across every entity referencing it. Since `require()` already caches modules (`package.loaded`), calling `require("behaviours.player")` from any file returns the same shared table every time — reuse works automatically, no special wiring needed.
+>
+> Most Sucata projects still aggregate behaviours into a single `behaviours/init.lua` table as an organizational convention (one place to see every behaviour, shorter references elsewhere):
 >
 > ```lua
 > -- behaviours/init.lua
@@ -145,7 +147,7 @@ return {
 > -- main.lua
 > Behaviours = require("behaviours")
 > ```
-> Then reference `Behaviours.Player` etc. everywhere — never `require("behaviours.player")` again from inside entity files. Requiring it fresh in multiple places would defeat behaviour reuse.
+> Then reference `Behaviours.Player` etc. — or `require("behaviours.player")` directly, both resolve to the same table either way.
 
 A common building-block behaviour worth copying into most projects, `DrawSprite` (renders `state.texture`/`width`/`height` if present):
 
@@ -264,6 +266,7 @@ Used from any behaviour: `local health = require("states.health"); health.remove
 
 - `sucata.graphic.draw_rect(props)` and `sucata.graphic.draw_text(props)` are the **only** two draw primitives, and they may **only be called inside a behaviour's `draw(state)` function** — calling them elsewhere (init/tick) has no effect since drawing happens in a dedicated render pass.
 - The engine batches all draw calls into one `renderQueue` per frame, grouped by `(z_index, texture, fixed, shader)`. For performance: reuse the **same texture** across similar sprites (use a texture atlas + `atlas_x`/`atlas_y`/`atlas_size` frame selection instead of many separate textures), and minimize the number of distinct `draw_text` calls.
+- Textures not drawn in a given frame are unloaded from GPU memory automatically. A texture drawn `sucata.graphic.get_hot_texture_threshold()` times in a row (default 300) is promoted to "hot" and stays resident for the rest of the run. Call `sucata.graphic.preload_texture(path)` to force that promotion immediately (e.g. for UI/atlas textures you know will be reused constantly), or `sucata.graphic.set_hot_texture_threshold(n)` to tune the promotion threshold — pass `0` to disable automatic promotion entirely, so textures only go hot via an explicit `preload_texture` call.
 - `origin = 0.5` centers the sprite on `x,y` (default origin is `0,0` = top-left corner).
 - `fixed = true` on `RectProps`/`TextProps` renders relative to the screen, ignoring the camera (for UI/HUD).
 - Texture atlas animation pattern (change frame based on state): set `atlas_x`/`atlas_y` in `tick`, e.g. `state.atlas_x = state.health - 1`.
@@ -308,7 +311,7 @@ Every module below is `sucata.<module>`. Full prose docs (with all fields/defaul
 
 **`sucata.scene`** — `load_scene(entities)`, `spawn(entity) -> id`, `spawns(entities) -> ids`, `find_by_id(id) -> entity|nil`, `destroy(entity_or_id) -> bool`, `destroys(entities) -> undestroyed_ids`, `add_tag/has_tag/remove_tag(entity_or_id, tag)`, `get_entities() -> ids`, `get_entities_by_tag(tag) -> ids`, `clear_entities()`, `init(callback)` (run once scene starts), `load_global(key, entity) -> id`, `get_global(key) -> entity|nil`, `unload_global(key)`.
 
-**`sucata.graphic`** — `draw_rect(RectProps)`, `draw_text(TextProps)` (draw-phase only), `set_background_color(hex)`, `load_shader(path) -> id|nil`, `add_post_processing(shader_id)`, `set_post_processing_args(shader_id, field, number|string|table)`, `remove_post_processing(shader_id)`. `RectProps`: `x,y,width,height,color,z_index,texture,scale(_x/_y),fixed,tiled,tile_size,tile_width,tile_height,origin(_x/_y),rotation,opacity,atlas_size,atlas_width,atlas_height,atlas_spacing,atlas_margin,atlas_x,atlas_y,shader,shader_args`. `TextProps`: `x,y,text,size,font,color,z_index,scale(_x/_y),fixed,origin(_x/_y),rotation,opacity,align,max_width,shader,shader_args`.
+**`sucata.graphic`** — `draw_rect(RectProps)`, `draw_text(TextProps)` (draw-phase only), `set_background_color(hex)`, `load_shader(path) -> id|nil`, `add_post_processing(shader_id)`, `set_post_processing_args(shader_id, field, number|string|table)`, `remove_post_processing(shader_id)`, `preload_texture(path)` (force-promotes a texture to "hot", see Rendering), `get_hot_texture_threshold() -> number`, `set_hot_texture_threshold(n)`. `RectProps`: `x,y,width,height,color,z_index,texture,scale(_x/_y),fixed,tiled,tile_size,tile_width,tile_height,origin(_x/_y),rotation,opacity,atlas_size,atlas_width,atlas_height,atlas_spacing,atlas_margin,atlas_x,atlas_y,shader,shader_args`. `TextProps`: `x,y,text,size,font,color,z_index,scale(_x/_y),fixed,origin(_x/_y),rotation,opacity,align,max_width,shader,shader_args`.
 
 **`sucata.input`** — `is_pressed/is_held/is_released(...keys) -> bool`, `get_mouse_position()/get_relative_mouse_position() -> x,y`, `get_mouse_scroll() -> x,y`, `get_key() -> code`, `is_hover({id,x,y,width,height,z_index?,fixed?}) -> bool`. `Key` values: `"mouse_left/right/middle"`, `"a"`–`"z"`, `"space"`/`" "`, `"escape"`/`"esc"`, `"enter"`/`"return"`, `"shift"`, `"ctrl"`/`"control"`, `"alt"`, `"apostrophe"`, `"tab"`, `"up"/"down"/"left"/"right"`.
 
@@ -333,7 +336,7 @@ Every module below is `sucata.<module>`. Full prose docs (with all fields/defaul
 ## Gotchas checklist
 
 - Only call `sucata.graphic.draw_*` from inside `draw(state)`.
-- Always route behaviours through one shared table (`Behaviours = require("behaviours")`), never `require` a behaviour module fresh in multiple files.
+- Behaviours are shared by Lua table pointer identity; `require()`'s own module caching means referencing a behaviour via `Behaviours.Player` or a direct `require("behaviours.player")` both resolve to the same table.
 - Behaviours execute in the order listed on the entity — order logic before rendering.
 - `init`/`tick`/`draw`/`free` are all optional — omit what you don't need.
 - Use `state.x = state.x or default` in `init` to make fields optional with sane defaults when constructing entities.

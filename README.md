@@ -1,4 +1,4 @@
-> This repository has only the installer of the sucata engine, with you want to learn more about it you can see [sucata-player](https://github.com/sucata-enginesucata-player) and [sucata-cli](https://github.com/sucata-enginesucata-cli)
+> This repository has only the installer of the sucata engine, if you want to learn more about it you can see [sucata-player](https://github.com/sucata-engine/sucata-player) and [sucata-cli](https://github.com/sucata-engine/sucata-cli)
 
 <div align="center">
     <img src="assets/sucata.png" height="150" width="150" />
@@ -7,7 +7,7 @@
 <h1 align="center">Sucata</h1>
 
 <p align="center">
-    Gather yours scraps and recycle into a game! <br/>
+    Gather your scraps and recycle into a game! <br/>
 </p>
 
 An open-source 2D game engine made with Odin programming language and Lua as scripting language, inspired by Love2D and Godot Engine.
@@ -25,6 +25,7 @@ An open-source 2D game engine made with Odin programming language and Lua as scr
 - Cross-platform support (Windows, macOS, Linux)
 - Simple and intuitive file system for asset management
 - Simple Custom Shader support
+- Native call support for C/C++ functions
 
 #### Future plans
 
@@ -33,8 +34,6 @@ An open-source 2D game engine made with Odin programming language and Lua as scr
 - Particle system
 - Maybe 3D support in the future
 - Support with [Tiled](https://www.mapeditor.org)
-- Native call support for C/C++ functions
-
 
 <br>
 
@@ -94,7 +93,7 @@ Read more at [sucata.dev](https://www.sucata.dev/getting-started/first-project/o
 
 A game inspired by the classic Asteroids game, where you need to survive as long as possible avoiding meteors.
 
-[Link](https://github.com/gumpdev/meteors-sucata)
+[Link](https://github.com/sucata-engine/meteors-sucata)
 
 <br>
 <a id="libraries"></a>
@@ -125,6 +124,6 @@ Some libraries used in Sucata Game Engine:
 
 ## 🤔 FAQ
 
-- **I Found a BUG!** _[Click here](https://github.com/sucata-engine.github/issues) and open an issue_
+- **I Found a BUG!** _[Click here](https://github.com/sucata-engine/sucata-engine/issues) and open an issue_
 - **Can I help with the project?** _Sure! just send your PR or idea_
 - **Can I contact you?** _Yep, send email to contact@gump.dev_
