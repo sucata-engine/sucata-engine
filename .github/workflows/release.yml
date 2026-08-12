@@ -68,17 +68,33 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      # Odin's vendor:stb (used by sucata-cli for image recompression) ships
-      # source only — needs its own one-time native build, same deal as sokol.
-      - name: Build Odin vendor libs (stb)
+      # macos-14 runners default clang to the standalone Command Line Tools
+      # SDK, which has broken Foundation/NSObjCRuntime.h headers (NSInteger /
+      # NSUInteger fail to resolve when compiling sokol_gfx.c's Metal include
+      # chain). Point at the full Xcode install instead.
+      - name: Select full Xcode toolchain
+        if: runner.os == 'macOS'
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      # Odin's vendor:stb (sucata-cli image recompression) and vendor:miniaudio
+      # (sucata-player audio) ship source only — need their own one-time
+      # native build, same deal as sokol. Invoked directly (not via `cmd /c`,
+      # which Git Bash on Windows mangles: `/c` gets read as a POSIX path and
+      # rewritten to a drive letter) — Git Bash executes .bat/.cmd files fine
+      # on their own, same as the `pwsh -File ...` calls below.
+      - name: Build Odin vendor libs (stb, miniaudio)
         run: |
           ODIN_ROOT=$(odin root)
           if [ "$RUNNER_OS" = "Windows" ]; then
             pushd "$ODIN_ROOT/vendor/stb/src" >/dev/null
-            cmd //c build.bat
+            ./build.bat
+            popd >/dev/null
+            pushd "$ODIN_ROOT/vendor/miniaudio/src" >/dev/null
+            ./build.bat
             popd >/dev/null
           else
             sh "$ODIN_ROOT/vendor/stb/src/build_stb.sh"
+            sh "$ODIN_ROOT/vendor/miniaudio/src/build_miniaudio.sh"
           fi
 
       - name: Install shared libs
@@ -98,7 +114,7 @@ jobs:
           for pkg in sucata-cli sucata-player; do
             pushd "$pkg" >/dev/null
             if [ "$RUNNER_OS" = "Windows" ]; then
-              cmd //c scripts/build-release/win.cmd
+              ./scripts/build-release/win.cmd
             else
               bash scripts/build-release/unix.sh
             fi
