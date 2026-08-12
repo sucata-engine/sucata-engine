@@ -68,13 +68,35 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      # macos-14 runners default clang to the standalone Command Line Tools
-      # SDK, which has broken Foundation/NSObjCRuntime.h headers (NSInteger /
-      # NSUInteger fail to resolve when compiling sokol_gfx.c's Metal include
-      # chain). Point at the full Xcode install instead.
-      - name: Select full Xcode toolchain
+      # laytan/setup-odin installs its own LLVM 18 and prepends it to PATH (Odin
+      # needs it for codegen). That shadows Apple's own clang, and a vanilla
+      # LLVM clang can't fully parse Apple's SDK headers (breaks NSInteger /
+      # NSUInteger while compiling sokol_gfx.c's Metal include chain). Put
+      # /usr/bin back in front so native C builds (sokol, stb, miniaudio) use
+      # Apple's clang, and point xcode-select at the full Xcode while at it.
+      - name: Prefer Apple clang for native macOS builds
         if: runner.os == 'macOS'
-        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          echo "/usr/bin" >> "$GITHUB_PATH"
+
+      # sucata-player links SDL3 (gamepad) via Odin's `system:SDL3` foreign
+      # import on Linux/macOS — Windows is fine as-is since Odin's vendor:sdl3
+      # already ships a prebuilt SDL3.dll/.lib for it.
+      - name: Setup SDL3
+        if: runner.os != 'Windows'
+        id: sdl
+        uses: libsdl-org/setup-sdl@main
+        with:
+          version: 3-latest
+          install-linux-dependencies: true
+          add-to-environment: true
+
+      - name: Expose SDL3 to the linker
+        if: runner.os != 'Windows'
+        run: |
+          echo "LIBRARY_PATH=${{ steps.sdl.outputs.prefix }}/lib:$LIBRARY_PATH" >> "$GITHUB_ENV"
+          echo "CPATH=${{ steps.sdl.outputs.prefix }}/include:$CPATH" >> "$GITHUB_ENV"
 
       # Odin's vendor:stb (sucata-cli image recompression) and vendor:miniaudio
       # (sucata-player audio) ship source only — need their own one-time
