@@ -163,7 +163,7 @@ jobs:
           chmod +x "$PKG/sucata${{ matrix.ext }}" "$PKG/sucata-player${{ matrix.ext }}"
 
           if [ "$RUNNER_OS" = "Windows" ]; then
-            cp sucata-player/lua51.dll sucata-player/SDL3.dll "$PKG/"
+            cp sucata-player/lua54.dll sucata-player/SDL3.dll "$PKG/"
           fi
 
           if [ -n "${{ matrix.shdc-bin }}" ]; then
