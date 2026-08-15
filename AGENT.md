@@ -1,6 +1,6 @@
 # AGENT.md — Building a game with the Sucata Engine
 
-This file is a practical, self-contained guide for creating a game with **Sucata**, a 2D game engine built with Odin (core) and scripted with **Lua** (game logic), in the spirit of Love2D/Godot. It's aimed at whoever (human or AI agent) is writing a *game* on top of Sucata — not at contributors to the engine's own source. For that, see the sibling repos [sucata-cli/AGENT.md](../sucata-cli/AGENT.md) and [sucata-player/AGENT.md](../sucata-player/AGENT.md).
+This file is a practical, self-contained guide for creating a game with **Sucata**, a 2D game engine built with Odin (core) and scripted with **Lua** (game logic), in the spirit of Love2D/Godot. It's aimed at whoever (human or AI agent) is writing a *game* on top of Sucata — not at contributors to the engine's own source. For that, see the sibling repos [sucata-cli/AGENT.md](https://github.com/sucata-engine/sucata-cli/blob/main/AGENT.md) and [sucata-player/AGENT.md](https://github.com/sucata-engine/sucata-player/blob/main/AGENT.md).
 
 The full generated Lua API reference lives at [sucata.dev/references](https://sucata.dev/references) (source: `../docs/docs/references/sucata.*.md` in this workspace). This guide condenses everything needed to be productive without leaving this file, and links out for exhaustive per-function detail.
 
@@ -31,48 +31,59 @@ Recommended: install the [sumneko Lua extension](https://luals.github.io) + the 
 
 ## Project layout convention
 
-There's no enforced scaffold, but every existing Sucata game (including the official `meteors-sucata` example) follows this shape:
+There's no enforced scaffold, but this project (and every existing Sucata game) follows this shape:
 
 ```
 my-game/
-├── main.lua              Entry point — required first by `sucata run`/`sucata build`
+├── main.lua               Entry point — required first by `sucata run`/`sucata build`
 ├── config.lua             Window setup (see below) — required from main.lua
-├── behaviours/
-│   ├── init.lua           Aggregates ALL behaviours into one shared table (see "Behaviours" below — important!)
-│   ├── player.lua
-│   ├── meteor.lua
-│   └── ...
+├── behaviours/            Reusable init/tick/draw/free tables
+│   ├── init.lua           Aggregator: exposes every behaviour in one table (see "Behaviours" — important!)
+│   ├── animator.lua
+│   ├── draw_sprite.lua
+│   ├── forces.lua
+│   └── player/            Entity-specific behaviours live in a subfolder named after the entity
+│       ├── init.lua       Nested aggregator — reached as `behaviours.player.*`
+│       ├── controller.lua
+│       ├── movement.lua
+│       └── punch.lua
 ├── entities/              Factory functions: fn(...) -> { state = {...}, behaviours = {...} }
-│   ├── player.lua
-│   ├── meteor.lua
-│   └── ...
-├── states/                Optional: plain modules of pure functions that mutate a state field
-│   └── health.lua         (shared logic callable from multiple behaviours, e.g. health.remove(state))
-├── sprites/                Texture assets (.png)
-├── sounds/                 Audio assets (.ogg, etc)
-└── fonts/                  Font assets
+│   └── player.lua
+├── mutators/              Pure functions that read/mutate one slice of an entity's state
+│   ├── init.lua           Aggregator — reached as `mutators.forces.*`, `mutators.status.*`
+│   ├── forces.lua
+│   └── status.lua
+├── commons/               Shared constants/enums — data only, no logic, no state
+│   └── status.lua
+├── sprites/               Texture assets (.png, plus .ase sources), one subfolder per entity
+│   └── player/
+├── sounds/                Audio assets (.ogg, etc)
+└── fonts/                 Font assets
 ```
+
+Naming rules that keep the aggregators predictable:
+
+- Files are `snake_case.lua`, and the key a module is exposed under in `init.lua` is exactly its file name (`draw_sprite.lua` → `draw_sprite`).
+- A folder is always reached through its `init.lua`, never file by file: `require("behaviours")` and `require("mutators")` are the only entry points into those trees.
+- A behaviour only one entity will ever use goes in `behaviours/<entity>/`; one any entity could reuse stays at the top level of `behaviours/`.
 
 `main.lua` example:
 
 ```lua
 require("config")
 
-Behaviours = require("behaviours")  -- single shared reference, see below
+local player = require("entities.player")
 
-local Player = require("entities.player")
-local game_manager = require("entities.game_manager")
-
-sucata.scene.spawn(Player(480, 500))
-sucata.scene.spawn(game_manager)
+sucata.scene.spawn(player(300, 500))
 ```
 
 `config.lua` example — window setup, conventionally isolated in its own file:
 
 ```lua
-sucata.window.set_window_size(960, 540)
+sucata.window.set_window_size(1280, 720)
 sucata.window.set_keep_aspect(1) -- 0 = off, 1 = keep aspect with bars, 2 = keep aspect with crop
 sucata.window.set_window_title("My Game")
+sucata.window.set_max_fps(0) -- 0 = uncapped
 sucata.window.set_vsync(1)
 sucata.window.show_debug_info(true) -- disable before shipping
 sucata.window.set_window_icon("src://icon.png")
@@ -94,18 +105,29 @@ An entity is a plain table with two fields:
 ```lua
 {
   state = { x = 0, y = 0 },      -- unique data for this entity (id is injected by the engine on spawn)
-  behaviours = { Behaviours.Foo, Behaviours.Bar }, -- ordered list of behaviours applied to it
+  behaviours = { behaviours.foo, behaviours.bar }, -- ordered list of behaviours applied to it
 }
 ```
 
-Entities are usually built via a factory function in `entities/<name>.lua`:
+Entities are built via a factory function in `entities/<name>.lua`, which pulls everything it needs from the aggregators:
 
 ```lua
 -- entities/player.lua
+local behaviours = require("behaviours")
+
 local function player(x, y)
+  ---@type Entity
   return {
-    state = { x = x, y = y },
-    behaviours = { Behaviours.Player, Behaviours.Shooter, Behaviours.DrawSprite },
+    state = { x = x, y = y, texture = "src://sprites/player/player.png" },
+    behaviours = {
+      behaviours.time,
+      behaviours.player.controller, -- entity-specific, from behaviours/player/
+      behaviours.status,
+      behaviours.animator,
+      behaviours.forces,
+      behaviours.player.movement,
+      behaviours.draw_sprite,       -- rendering last
+    },
   }
 end
 
@@ -113,7 +135,7 @@ return player
 ```
 
 ```lua
-sucata.scene.spawn(Player(480, 500))
+sucata.scene.spawn(player(300, 500))
 ```
 
 ### Behaviour — the core building block
@@ -121,6 +143,7 @@ sucata.scene.spawn(Player(480, 500))
 A behaviour is a **stateless, reusable** table of up to four optional functions, all receiving the entity's `state` table:
 
 ```lua
+---@type Behaviour
 return {
   init = function(state) end,  -- once, when the entity is spawned/scene loads
   tick = function(state) end,  -- every frame, before drawing — game logic, input, physics
@@ -129,65 +152,81 @@ return {
 }
 ```
 
-**Behaviours on an entity run in the order listed.** Put logic before rendering (e.g. `Player` movement before `DrawSprite`).
+Annotate every behaviour module with `---@type Behaviour` (and every entity factory's return with `---@type Entity`) so the sumneko addon type-checks the table.
 
-> **How behaviour reuse works**: Sucata registers a behaviour once per Lua table *pointer identity* and shares that registration across every entity referencing it. Since `require()` already caches modules (`package.loaded`), calling `require("behaviours.player")` from any file returns the same shared table every time — reuse works automatically, no special wiring needed.
->
-> Most Sucata projects still aggregate behaviours into a single `behaviours/init.lua` table as an organizational convention (one place to see every behaviour, shorter references elsewhere):
+**Behaviours on an entity run in the order listed.** Put logic before rendering (e.g. `movement` before `draw_sprite`).
+
+> **Critical performance/correctness rule**: Sucata reuses behaviours that share the same Lua table *pointer identity*. Define each behaviour once, in its own file, and reach it only through an aggregator `init.lua`:
 >
 > ```lua
-> -- behaviours/init.lua
+> -- behaviours/init.lua — generic behaviours + one key per entity subfolder
 > return {
->   DrawSprite = require("behaviours.draw_sprite"),
->   Player     = require("behaviours.player"),
->   Shooter    = require("behaviours.shooter"),
+>   animator     = require("behaviours.animator"),
+>   draw_sprite  = require("behaviours.draw_sprite"),
+>   forces       = require("behaviours.forces"),
+>   player       = require("behaviours.player"), -- resolves to behaviours/player/init.lua
 > }
 > ```
 > ```lua
-> -- main.lua
-> Behaviours = require("behaviours")
+> -- behaviours/player/init.lua
+> return {
+>   controller = require("behaviours.player.controller"),
+>   movement   = require("behaviours.player.movement"),
+>   punch      = require("behaviours.player.punch"),
+> }
 > ```
-> Then reference `Behaviours.Player` etc. — or `require("behaviours.player")` directly, both resolve to the same table either way.
+> Consumers then do `local behaviours = require("behaviours")` at the top of the file and reference `behaviours.animator` / `behaviours.player.movement`. `require` caches by module name, so every file gets the same tables and reuse holds — but only if nothing bypasses the aggregator with a direct `require("behaviours.player.movement")`.
 
-A common building-block behaviour worth copying into most projects, `DrawSprite` (renders `state.texture`/`width`/`height` if present):
+The building-block behaviours in this project — copy the shape when adding new ones. `draw_sprite` (renders the entity's sprite; note that it forwards optional fields as-is so `nil` falls back to engine defaults):
 
 ```lua
+local DEFAULT_WIDTH, DEFAULT_HEIGHT = 128, 128
+
+---@type Behaviour
 return {
-  init = function(state)
-    state.x = state.x or 0
-    state.y = state.y or 0
-    state.width = state.width or 32
-    state.height = state.height or 32
-    state.texture = state.texture or ""
-    state.atlas_x = state.atlas_x or 0
-  end,
   draw = function(state)
     sucata.graphic.draw_rect({
-      x = state.x, y = state.y,
-      width = state.width, height = state.height,
+      x = state.x or 0,
+      y = state.y or 0,
+      width = state.width or DEFAULT_WIDTH,
+      height = state.height or DEFAULT_HEIGHT,
+      z_index = state.z_index or 0,
+      origin_x = state.origin_x or 0.5, -- feet-anchored: centered horizontally
+      origin_y = state.origin_y or 1,   -- with the bottom edge on state.y
       texture = state.texture,
-      origin = 0.5, -- center the sprite on x,y instead of top-left
       atlas_size = state.atlas_size,
       atlas_x = state.atlas_x,
+      atlas_y = state.atlas_y,
+      scale_x = state.scale_x,
+      scale_y = state.scale_y,
+      opacity = state.opacity,
+      fixed = state.fixed,
     })
   end
 }
 ```
 
-Another common one, `ApplyForces` (simple velocity integration):
+`forces` — named-force accumulator, integrated once per frame. Behaviours never write `state.x` directly; they add/clear a *named* force through `mutators.forces` (see "Mutators" below) so gravity, jump and movement can coexist without overwriting each other:
 
 ```lua
+---@type Behaviour
 return {
   init = function(state)
-    state.x = state.x or 0
-    state.y = state.y or 0
-    state.force_x = state.force_x or 0
-    state.force_y = state.force_y or 0
+    state.forces = {}
+    state.velocity_x = 0
+    state.velocity_y = 0
   end,
   tick = function(state)
-    local dt = sucata.time.get_delta()
-    state.x = state.x + state.force_x * dt
-    state.y = state.y + state.force_y * dt
+    local delta = sucata.time.get_delta()
+    local velocity_x, velocity_y = 0, 0
+    for _, force in pairs(state.forces) do
+      velocity_x = velocity_x + force.x
+      velocity_y = velocity_y + force.y
+    end
+    state.velocity_x = velocity_x
+    state.velocity_y = velocity_y
+    state.x = state.x + (velocity_x * delta)
+    state.y = state.y + (velocity_y * delta)
   end
 }
 ```
@@ -197,7 +236,7 @@ return {
 Entities are flat; there's no parent/child tree. To relate entities, store one's id in another's state and resolve it later:
 
 ```lua
-local bullet_id = sucata.scene.spawn(Bullet())
+local bullet_id = sucata.scene.spawn(bullet())
 self.child_id = bullet_id
 ...
 local bullet = sucata.scene.find_by_id(self.child_id)
@@ -237,6 +276,22 @@ sucata.events.on(state, "meteor_reached", function(meteor_state)
 end)
 ```
 
+Events are global, so this project's convention for entity-scoped events (input intents, status changes) is to send `{ id = state.id, ... }` and have each listener filter on it — that's what lets `controller` stay a dumb input reader while `jump`/`punch` decide what to do:
+
+```lua
+-- behaviours/player/controller.lua
+if sucata.input.is_pressed("space") then
+  sucata.events.emit("jump", { id = state.id })
+end
+
+-- behaviours/jump.lua
+sucata.events.on(state, "jump", function(data)
+  if data.id == state.id and state.is_on_floor then
+    mutators.forces.set_force(state, "jump", { x = 0, y = state.jump_force })
+  end
+end)
+```
+
 ### Timers
 
 ```lua
@@ -247,29 +302,66 @@ end, { time = 5, loop = true, auto_start = true })
 
 Or the shorthand `sucata.time.create_timer(callback, seconds)` for a one-shot. Also: `sucata.time.pause_timer(id)`, `sucata.time.stop_timer(id)`, `sucata.time.get_delta()`, `sucata.time.get_fps()`, `sucata.time.get_time_scale()`/`set_time_scale()` (slow-mo / pause effects).
 
-### "States" pattern (optional but recommended)
+### Mutators — shared logic over a slice of state
 
-Plain modules of pure functions that mutate a piece of state, shareable across multiple behaviours instead of duplicating logic:
+`mutators/` holds plain modules of stateless functions that read and mutate one named slice of an entity's `state`, so multiple behaviours share the logic instead of duplicating it. They are the *only* thing that should touch that slice.
 
 ```lua
--- states/health.lua
-local function remove(state)
-  if not state.health then return end
-  state.health = state.health - 1
+-- mutators/forces.lua (excerpt)
+local function set_force(state, force_type, value)
+  if not state.forces then return end
+  state.forces[force_type] = value
 end
-return { remove = remove }
+
+local function clear_force(state, force_type)
+  if not state.forces then return end
+  set_force(state, force_type, { x = 0, y = 0 })
+end
+
+return { set_force = set_force, clear_force = clear_force, --[[ add_force, get_force, move_force_towards_zero ]] }
 ```
 
-Used from any behaviour: `local health = require("states.health"); health.remove(meteor)`.
+Every mutator module is re-exported from `mutators/init.lua`, and consumers require the folder, never the file:
+
+```lua
+local mutators = require("mutators")
+
+mutators.forces.set_force(state, "jump", { x = 0, y = state.jump_force })
+mutators.status.frooze_status(state, status.PUNCHING, 7 * 0.15)
+```
+
+Guard defensively (`if not state.forces then return end`) — a mutator may run against an entity whose behaviour list never initialised that slice.
+
+Current mutators:
+
+- **`mutators.forces`** — `get_force`, `set_force`, `add_force`, `clear_force`, `move_force_towards_zero`, all keyed by a force name (`"gravity"`, `"jump"`, `"movement"`).
+- **`mutators.status`** — `set_status`, `frooze_status(state, status, time)` (locks the status for N seconds via a timer), `is_status(state, {..})`.
+
+### Commons — shared constants
+
+`commons/` holds data-only modules: enums and constants shared across behaviours, entities and mutators. No functions, no state.
+
+```lua
+-- commons/status.lua
+return {
+  IDLE = 0, WALKING = 1, JUMPING = 2,
+  LANDING = 3, PUNCHING = 4, DEFENSING = 5,
+}
+```
+
+Required directly by file (there's no aggregator here, since each constant set is independent): `local status = require("commons.status")`.
+
+### Status + animation convention
+
+The `status`/`animator` pair is how entities drive their sprite. An entity exposes `state.get_status(state)`, the `status` behaviour calls it each tick and emits `"status_changed"` when the value flips, and `animator` maps the current status to a row of the texture atlas via `state.animations[status] = { atlas_y, time, frames, one_shot? }`. Order matters: `status` must run before `animator`, and both before `draw_sprite`.
 
 ## Rendering
 
 - `sucata.graphic.draw_rect(props)` and `sucata.graphic.draw_text(props)` are the **only** two draw primitives, and they may **only be called inside a behaviour's `draw(state)` function** — calling them elsewhere (init/tick) has no effect since drawing happens in a dedicated render pass.
 - The engine batches all draw calls into one `renderQueue` per frame, grouped by `(z_index, texture, fixed, shader)`. For performance: reuse the **same texture** across similar sprites (use a texture atlas + `atlas_x`/`atlas_y`/`atlas_size` frame selection instead of many separate textures), and minimize the number of distinct `draw_text` calls.
-- Textures not drawn in a given frame are unloaded from GPU memory automatically. A texture drawn `sucata.graphic.get_hot_texture_threshold()` times in a row (default 300) is promoted to "hot" and stays resident for the rest of the run. Call `sucata.graphic.preload_texture(path)` to force that promotion immediately (e.g. for UI/atlas textures you know will be reused constantly), or `sucata.graphic.set_hot_texture_threshold(n)` to tune the promotion threshold — pass `0` to disable automatic promotion entirely, so textures only go hot via an explicit `preload_texture` call.
 - `origin = 0.5` centers the sprite on `x,y` (default origin is `0,0` = top-left corner).
 - `fixed = true` on `RectProps`/`TextProps` renders relative to the screen, ignoring the camera (for UI/HUD).
-- Texture atlas animation pattern (change frame based on state): set `atlas_x`/`atlas_y` in `tick`, e.g. `state.atlas_x = state.health - 1`.
+- Texture atlas animation pattern (change frame based on state): set `atlas_x`/`atlas_y` in `tick` — in this project that's the `animator` behaviour's job (`atlas_y` = row per status, `atlas_x` = frame, via `sucata.math.smooth_index` for loops or a clamped counter for `one_shot`), so add animations to `state.animations` rather than writing `atlas_*` from your own behaviour.
 - Camera: `sucata.camera.get_camera_position/set_camera_position`, `get_camera_rotation/set_camera_rotation`, `get_camera_zoom/set_camera_zoom` — moves/rotates/zooms the (non-fixed) world view.
 - Custom shaders: `sucata.graphic.load_shader(path)` (loads a compiled `.schd`) → pass the returned id as `shader` in `draw_rect`/`draw_text` props, or `sucata.graphic.add_post_processing(shader_id)` for full-screen post-fx, tunable at runtime with `sucata.graphic.set_post_processing_args(shader_id, field, value)`.
 
@@ -311,7 +403,7 @@ Every module below is `sucata.<module>`. Full prose docs (with all fields/defaul
 
 **`sucata.scene`** — `load_scene(entities)`, `spawn(entity) -> id`, `spawns(entities) -> ids`, `find_by_id(id) -> entity|nil`, `destroy(entity_or_id) -> bool`, `destroys(entities) -> undestroyed_ids`, `add_tag/has_tag/remove_tag(entity_or_id, tag)`, `get_entities() -> ids`, `get_entities_by_tag(tag) -> ids`, `clear_entities()`, `init(callback)` (run once scene starts), `load_global(key, entity) -> id`, `get_global(key) -> entity|nil`, `unload_global(key)`.
 
-**`sucata.graphic`** — `draw_rect(RectProps)`, `draw_text(TextProps)` (draw-phase only), `set_background_color(hex)`, `load_shader(path) -> id|nil`, `add_post_processing(shader_id)`, `set_post_processing_args(shader_id, field, number|string|table)`, `remove_post_processing(shader_id)`, `preload_texture(path)` (force-promotes a texture to "hot", see Rendering), `get_hot_texture_threshold() -> number`, `set_hot_texture_threshold(n)`. `RectProps`: `x,y,width,height,color,z_index,texture,scale(_x/_y),fixed,tiled,tile_size,tile_width,tile_height,origin(_x/_y),rotation,opacity,atlas_size,atlas_width,atlas_height,atlas_spacing,atlas_margin,atlas_x,atlas_y,shader,shader_args`. `TextProps`: `x,y,text,size,font,color,z_index,scale(_x/_y),fixed,origin(_x/_y),rotation,opacity,align,max_width,shader,shader_args`.
+**`sucata.graphic`** — `draw_rect(RectProps)`, `draw_text(TextProps)` (draw-phase only), `set_background_color(hex)`, `load_shader(path) -> id|nil`, `add_post_processing(shader_id)`, `set_post_processing_args(shader_id, field, number|string|table)`, `remove_post_processing(shader_id)`. `RectProps`: `x,y,width,height,color,z_index,texture,scale(_x/_y),fixed,tiled,tile_size,tile_width,tile_height,origin(_x/_y),rotation,opacity,atlas_size,atlas_width,atlas_height,atlas_spacing,atlas_margin,atlas_x,atlas_y,shader,shader_args`. `TextProps`: `x,y,text,size,font,color,z_index,scale(_x/_y),fixed,origin(_x/_y),rotation,opacity,align,max_width,shader,shader_args`.
 
 **`sucata.input`** — `is_pressed/is_held/is_released(...keys) -> bool`, `get_mouse_position()/get_relative_mouse_position() -> x,y`, `get_mouse_scroll() -> x,y`, `get_key() -> code`, `is_hover({id,x,y,width,height,z_index?,fixed?}) -> bool`. `Key` values: `"mouse_left/right/middle"`, `"a"`–`"z"`, `"space"`/`" "`, `"escape"`/`"esc"`, `"enter"`/`"return"`, `"shift"`, `"ctrl"`/`"control"`, `"alt"`, `"apostrophe"`, `"tab"`, `"up"/"down"/"left"/"right"`.
 
@@ -325,7 +417,7 @@ Every module below is `sucata.<module>`. Full prose docs (with all fields/defaul
 
 **`sucata.camera`** — `get/set_camera_position(x,y)`, `get/set_camera_rotation(radians)`, `get/set_camera_zoom(zoom)`.
 
-**`sucata.window`** — `get/set_mouse_lock(bool)`, `get/set_mouse_visible(bool)`, `get/set_window_title(str)`, `get/set_window_size(w,h)`, `get/set_fullscreen(bool)`, `get/set_vsync(n)`, `quit()`, `show_debug_info(bool)`, `get/set_keep_aspect(0|1|2)`, `get/set_window_icon(path)`, `get/set_cursor(name)`, `on_init(callback)`, `on_exit(callback)`.
+**`sucata.window`** — `get/set_mouse_lock(bool)`, `get/set_mouse_visible(bool)`, `get/set_window_title(str)`, `get/set_window_size(w,h)`, `get/set_fullscreen(bool)`, `get/set_vsync(n)`, `get/set_max_fps(n)` (0 = uncapped), `quit()`, `show_debug_info(bool)`, `get/set_keep_aspect(0|1|2)`, `get/set_window_icon(path)`, `get/set_cursor(name)`, `on_init(callback)`, `on_exit(callback)`.
 
 **`sucata.filesystem`** — `exists(path) -> bool`, `remove(path)`, `mkdir(path)`, `read_file(path) -> str|nil`, `read_dir(path) -> table|nil`, `write(path, content) -> bool`, `rename(old, new)`.
 
@@ -336,8 +428,11 @@ Every module below is `sucata.<module>`. Full prose docs (with all fields/defaul
 ## Gotchas checklist
 
 - Only call `sucata.graphic.draw_*` from inside `draw(state)`.
-- Behaviours are shared by Lua table pointer identity; `require()`'s own module caching means referencing a behaviour via `Behaviours.Player` or a direct `require("behaviours.player")` both resolve to the same table.
-- Behaviours execute in the order listed on the entity — order logic before rendering.
+- Always route behaviours through the aggregators (`local behaviours = require("behaviours")`, then `behaviours.player.movement`) — never `require` a behaviour file directly from an entity or another behaviour.
+- Register new modules in the matching `init.lua` (`behaviours/`, `behaviours/<entity>/`, `mutators/`) as soon as you create them, under a key equal to the file name.
+- Behaviours execute in the order listed on the entity — order logic before rendering, and `status` before `animator` before `draw_sprite`.
+- Mutate shared state slices through `mutators.*`, not by writing the fields inline from a behaviour.
+- Keep constants in `commons/`, not scattered as magic numbers across behaviours.
 - `init`/`tick`/`draw`/`free` are all optional — omit what you don't need.
 - Use `state.x = state.x or default` in `init` to make fields optional with sane defaults when constructing entities.
 - Prefer one texture/atlas over many separate images, and batch text draws, for render performance.
@@ -346,7 +441,7 @@ Every module below is `sucata.<module>`. Full prose docs (with all fields/defaul
 
 ## Related
 
-- [sucata-cli/AGENT.md](../sucata-cli/AGENT.md) — the `sucata` CLI tool internals (Odin).
-- [sucata-player/AGENT.md](../sucata-player/AGENT.md) — the engine runtime internals (Odin) and how the Lua API is bound.
-- `docs/docs/references/sucata.*.md` — full prose API reference (source of the condensed table above).
-- `docs/docs/getting-started/first-project/` — the full step-by-step Asteroids-style tutorial this guide is distilled from.
+- [sucata-cli/AGENT.md](https://github.com/sucata-engine/sucata-cli/blob/main/AGENT.md) — the `sucata` CLI tool internals (Odin).
+- [sucata-player/AGENT.md](https://github.com/sucata-engine/sucata-player/blob/main/AGENT.md) — the engine runtime internals (Odin) and how the Lua API is bound.
+- [sucata-docs/docs/references/](https://github.com/sucata-engine/sucata-docs/tree/main/docs/references) — full prose API reference (source of the condensed table above), published at [sucata.dev/references](https://sucata.dev/references).
+- [sucata-docs/docs/getting-started/first-project/](https://github.com/sucata-engine/sucata-docs/tree/main/docs/getting-started/first-project) — the full step-by-step Asteroids-style tutorial this guide is distilled from.
