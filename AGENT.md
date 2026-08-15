@@ -24,7 +24,7 @@ Recommended: install the [sumneko Lua extension](https://luals.github.io) + the 
 | Command | Purpose |
 |---|---|
 | `sucata run <main.lua> [--entity <file>]` | Run a game (or a single entity file, for isolated testing) through the engine (`sucata-player`) in dev mode. |
-| `sucata build <main.lua> [--icon <path>]` | Package the game into a native, OS-specific distributable (see "Building" below). Current OS only, no cross-build yet. |
+| `sucata build <main.lua> [--icon <path>] [--optimize]` | Package the game into a native, OS-specific distributable (see "Building" below). `--optimize` recompresses opaque images as JPEG to shrink the bundle. Current OS only, no cross-build yet. |
 | `sucata shader build <file.glsl>` | Compile a custom `.glsl` shader into the engine's `.schd` format. |
 | `sucata shader create <file> [--post-processing\|-pp] [--font\|-f]` | Scaffold a starter `.glsl` shader template. |
 | `sucata version` | Print engine version. |
