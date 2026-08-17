@@ -357,13 +357,40 @@ The `status`/`animator` pair is how entities drive their sprite. An entity expos
 
 ## Rendering
 
-- `sucata.graphic.draw_rect(props)` and `sucata.graphic.draw_text(props)` are the **only** two draw primitives, and they may **only be called inside a behaviour's `draw(state)` function** — calling them elsewhere (init/tick) has no effect since drawing happens in a dedicated render pass.
+- `sucata.graphic.draw_rect(props)` and `sucata.graphic.draw_text(props)` are the **only** two *sprite/world* draw primitives, and they may **only be called inside a behaviour's `draw(state)` function** — calling them elsewhere (init/tick) has no effect since drawing happens in a dedicated render pass. For buttons/checkboxes/sliders/text input, use `sucata.ui.*` instead (see UI below) — it's a separate, immediate-mode widget system, not built on `draw_rect`/`draw_text`.
 - The engine batches all draw calls into one `renderQueue` per frame, grouped by `(z_index, texture, fixed, shader)`. For performance: reuse the **same texture** across similar sprites (use a texture atlas + `atlas_x`/`atlas_y`/`atlas_size` frame selection instead of many separate textures), and minimize the number of distinct `draw_text` calls.
 - `origin = 0.5` centers the sprite on `x,y` (default origin is `0,0` = top-left corner).
 - `fixed = true` on `RectProps`/`TextProps` renders relative to the screen, ignoring the camera (for UI/HUD).
 - Texture atlas animation pattern (change frame based on state): set `atlas_x`/`atlas_y` in `tick` — in this project that's the `animator` behaviour's job (`atlas_y` = row per status, `atlas_x` = frame, via `sucata.math.smooth_index` for loops or a clamped counter for `one_shot`), so add animations to `state.animations` rather than writing `atlas_*` from your own behaviour.
 - Camera: `sucata.camera.get_camera_position/set_camera_position`, `get_camera_rotation/set_camera_rotation`, `get_camera_zoom/set_camera_zoom` — moves/rotates/zooms the (non-fixed) world view.
 - Custom shaders: `sucata.graphic.load_shader(path)` (loads a compiled `.schd`) → pass the returned id as `shader` in `draw_rect`/`draw_text` props, or `sucata.graphic.add_post_processing(shader_id)` for full-screen post-fx, tunable at runtime with `sucata.graphic.set_post_processing_args(shader_id, field, value)`.
+
+## UI
+
+Immediate-mode widgets ([microui](https://github.com/rxi/microui)-backed), separate from `sucata.graphic`. Every `sucata.ui.draw_*`/`popup_open` call takes **one table** and must happen inside `draw(state)`, same as the sprite primitives — calling one elsewhere is a no-op (logs an error).
+
+```lua
+-- widgets placed directly on screen, no visible window needed
+sucata.ui.draw_label({ text = "Score: " .. state.score })
+
+if sucata.ui.draw_button({ text = "Pause" }) then
+  sucata.events.emit("pause_pressed")
+end
+
+-- widgets inside a window
+if sucata.ui.draw_window({ title = "Settings", x = 40, y = 40, width = 260, height = 160 }) then
+  local changed, volume = sucata.ui.draw_slider({ id = "volume", value = 80, low = 0, high = 100 })
+  if changed then sucata.audio.set_group_volume("music", volume / 100) end
+
+  sucata.ui.end_window()
+end
+```
+
+- **No window needed**: a widget drawn without an open `draw_window`/`draw_popup` around it lands on an implicit full-screen root canvas automatically — there's no `draw_root()` to call.
+- **Contract**: `draw_window`/`draw_popup` return whether the container is open — only call the matching `end_window`/`end_popup` **if and only if** that call returned `true` (mirrors vanilla microui's C API). Calling `end_*` unconditionally, or skipping it after a `true`, corrupts the UI's internal state for the rest of the run.
+- Popups: `sucata.ui.popup_open({name=...})` to trigger (e.g. from a button click), then `sucata.ui.draw_popup({name=...})` — same name — to place its contents; closes automatically on an outside click.
+- Stateful widgets (`draw_checkbox`, `draw_slider`, `draw_textbox`) persist their value across frames keyed by a required `id` string you choose — reuse the same `id` for the same logical widget every frame, and don't reuse it for two different widgets.
+- Every `draw_*` call accepts optional style overrides in the same table: `x`/`y`/`width`/`height` (must be given together to override auto-layout), `text_size`, `color`, `background_color`, `border_color` (all `{r,g,b,a?}`, 0.0-1.0).
 
 ## Input
 
@@ -404,6 +431,8 @@ Every module below is `sucata.<module>`. Full prose docs (with all fields/defaul
 **`sucata.scene`** — `load_scene(entities)`, `spawn(entity) -> id`, `spawns(entities) -> ids`, `find_by_id(id) -> entity|nil`, `destroy(entity_or_id) -> bool`, `destroys(entities) -> undestroyed_ids`, `add_tag/has_tag/remove_tag(entity_or_id, tag)`, `get_entities() -> ids`, `get_entities_by_tag(tag) -> ids`, `clear_entities()`, `init(callback)` (run once scene starts), `load_global(key, entity) -> id`, `get_global(key) -> entity|nil`, `unload_global(key)`.
 
 **`sucata.graphic`** — `draw_rect(RectProps)`, `draw_text(TextProps)` (draw-phase only), `set_background_color(hex)`, `load_shader(path) -> id|nil`, `add_post_processing(shader_id)`, `set_post_processing_args(shader_id, field, number|string|table)`, `remove_post_processing(shader_id)`. `RectProps`: `x,y,width,height,color,z_index,texture,scale(_x/_y),fixed,tiled,tile_size,tile_width,tile_height,origin(_x/_y),rotation,opacity,atlas_size,atlas_width,atlas_height,atlas_spacing,atlas_margin,atlas_x,atlas_y,shader,shader_args`. `TextProps`: `x,y,text,size,font,color,z_index,scale(_x/_y),fixed,origin(_x/_y),rotation,opacity,align,max_width,shader,shader_args`.
+
+**`sucata.ui`** — immediate-mode widgets, every call takes one table, only inside `draw(state)`: `draw_window(UIWindowProps) -> open`, `end_window()`, `popup_open({name})`, `draw_popup({name}) -> open`, `end_popup()`, `draw_label({text,...UIStyle})`, `draw_text({text,...UIStyle})`, `draw_button({text,...UIStyle}) -> clicked`, `draw_checkbox({id,text,...UIStyle}) -> changed, checked`, `draw_slider({id,value,low,high,step,...UIStyle}) -> changed, value`, `draw_textbox({id,text,...UIStyle}) -> changed, submitted, text`. `end_*` only if the matching `draw_*` returned `true`; widgets drawn without an open window/popup land on an implicit root automatically. `UIStyle` (optional on every widget): `x,y,width,height` (all four together to override auto-layout), `text_size`, `color`, `background_color`, `border_color`. See UI above for the full contract.
 
 **`sucata.input`** — `is_pressed/is_held/is_released(...keys) -> bool`, `get_mouse_position()/get_relative_mouse_position() -> x,y`, `get_mouse_scroll() -> x,y`, `get_key() -> code`, `is_hover({id,x,y,width,height,z_index?,fixed?}) -> bool`. `Key` values: `"mouse_left/right/middle"`, `"a"`–`"z"`, `"space"`/`" "`, `"escape"`/`"esc"`, `"enter"`/`"return"`, `"shift"`, `"ctrl"`/`"control"`, `"alt"`, `"apostrophe"`, `"tab"`, `"up"/"down"/"left"/"right"`.
 
