@@ -117,6 +117,8 @@ jobs:
         run: |
           ODIN_ROOT=$(odin root)
           if [ "$RUNNER_OS" = "Windows" ]; then
+            sed -i 's/-MT/-MD/' "$ODIN_ROOT/vendor/stb/src/build.bat"
+            sed -i 's/-MT/-MD/' "$ODIN_ROOT/vendor/miniaudio/src/build.bat"
             pushd "$ODIN_ROOT/vendor/stb/src" >/dev/null
             ./build.bat
             popd >/dev/null
