@@ -12,6 +12,16 @@ on:
         required: false
         type: boolean
         default: false
+      cli-ref:
+        description: "sucata-cli branch/tag/commit (empty = default branch)"
+        required: false
+        type: string
+        default: ""
+      player-ref:
+        description: "sucata-player branch/tag/commit (empty = default branch)"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -43,12 +53,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: sucata-engine/sucata-cli
+          ref: ${{ inputs.cli-ref }}
           path: sucata-cli
 
       - name: Checkout sucata-player
         uses: actions/checkout@v4
         with:
           repository: sucata-engine/sucata-player
+          ref: ${{ inputs.player-ref }}
           path: sucata-player
 
       - name: Setup Odin
@@ -79,15 +91,6 @@ jobs:
         run: |
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           echo "/usr/bin" >> "$GITHUB_PATH"
-
-      # Odin's vendor:lua/5.4 only ships a prebuilt library for Windows and
-      # Linux amd64 — on macOS it falls back to Odin's `system:lua5.4` foreign
-      # import too, same deal as SDL3 above.
-      - name: Install Lua 5.4 (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install lua@5.4
-          echo "LIBRARY_PATH=$(brew --prefix lua@5.4)/lib:$LIBRARY_PATH" >> "$GITHUB_ENV"
 
       # sucata-player links SDL3 (gamepad) via Odin's `system:SDL3` foreign
       # import on Linux/macOS — Windows is fine as-is since Odin's vendor:sdl3
@@ -140,6 +143,24 @@ jobs:
             popd >/dev/null
           done
 
+      - name: Verify LuaJIT build
+        run: |
+          set -e
+          for pkg in sucata-cli sucata-player; do
+            case "$RUNNER_OS" in
+              Windows) files="$pkg/src/luajit/lib/windows/lua51.lib $pkg/lua51.dll" ;;
+              macOS)   files="$pkg/src/luajit/lib/darwin/libluajit.a" ;;
+              *)       files="$pkg/src/luajit/lib/linux/libluajit.a" ;;
+            esac
+            for f in $files; do
+              if [ ! -f "$f" ]; then
+                echo "::error::LuaJIT artifact missing: $f"
+                exit 1
+              fi
+              echo "ok: $f"
+            done
+          done
+
       - name: Build sucata-cli + sucata-player (release)
         run: |
           for pkg in sucata-cli sucata-player; do
@@ -163,7 +184,11 @@ jobs:
           chmod +x "$PKG/sucata${{ matrix.ext }}" "$PKG/sucata-player${{ matrix.ext }}"
 
           if [ "$RUNNER_OS" = "Windows" ]; then
-            cp sucata-player/lua54.dll sucata-player/SDL3.dll "$PKG/"
+            cp sucata-player/lua51.dll sucata-player/SDL3.dll "$PKG/"
+          fi
+
+          if [ -d sucata-player/licenses ]; then
+            cp -r sucata-player/licenses "$PKG/licenses"
           fi
 
           if [ -n "${{ matrix.shdc-bin }}" ]; then
