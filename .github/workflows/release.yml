@@ -40,7 +40,7 @@ jobs:
             target: sucata-win-amd64
             ext: ".exe"
             shdc-bin: sokol-shdc-win.exe
-          - os: macos-14 
+          - os: macos-15
             target: sucata-osx-arm64
             ext: ""
             shdc-bin: sokol-shdc-osx-arm
@@ -89,7 +89,10 @@ jobs:
       - name: Prefer Apple clang for native macOS builds
         if: runner.os == 'macOS'
         run: |
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          if [ -d /Applications/Xcode.app ]; then
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          fi
+          xcode-select -p
           echo "/usr/bin" >> "$GITHUB_PATH"
 
       # sucata-player links SDL3 (gamepad) via Odin's `system:SDL3` foreign
@@ -132,16 +135,26 @@ jobs:
           fi
 
       - name: Install shared libs
+        if: runner.os != 'Windows'
         run: |
           for pkg in sucata-cli sucata-player; do
             pushd "$pkg" >/dev/null
-            if [ "$RUNNER_OS" = "Windows" ]; then
-              pwsh -File scripts/install-shared/win.ps1
-            else
-              bash scripts/install-shared/unix.sh
-            fi
+            bash scripts/install-shared/unix.sh
             popd >/dev/null
           done
+
+      - name: Install shared libs (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "link.exe: $((Get-Command link.exe).Source)"
+          foreach ($pkg in 'sucata-cli', 'sucata-player') {
+            Push-Location $pkg
+            pwsh -File scripts/install-shared/win.ps1
+            $code = $LASTEXITCODE
+            Pop-Location
+            if ($code -ne 0) { throw "install-shared failed for $pkg (exit $code)" }
+          }
 
       - name: Verify LuaJIT build
         run: |
